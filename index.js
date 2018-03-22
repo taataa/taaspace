@@ -13,5 +13,6 @@ exports.Wheelable = require('./lib/Wheelable')
 // exports.SpacePoint = require('./lib/SpacePoint')
 // exports.SpaceTransform = require('./lib/SpaceTransform')
 
+exports.traverse = require('./lib/traverse')
 exports.preload = require('loadimages')
 exports.version = require('./lib/version')

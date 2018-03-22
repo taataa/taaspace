@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>videograph - Tapspace Example</title>
+  <title>Videograph - Tapspace Example</title>
 
   <!--
     Vimeo Graph Browser
@@ -29,249 +29,395 @@
   <div id="space"></div>
 
   <script src="../assets/ghoulog.js"></script>
-  <script src="https://unpkg.com/tapspace@1.3.0/dist/tapspace.min.js"></script>
+  <script src="/tapspace.min.js"></script>
 
   <script>
 
-    // Methods for connecting Vimeo API
+    var ROOT_VIDEO_ID = 'x6fuxi8'
+    var NUM_CHILDREN = 4
+    var LEVEL_SCALE = 3
 
-    var TOKEN = 'OWY4NTQxMDNkNWFjYTQwMDZkMzU3YzFhNDZjODg2NTZlN2M3MmFjZjpJVz' +
-      'RIRmt1a3VuSGY2dmw0d1VaL1JVcWEzNFJuc2p2RGJKWDlsemVQQ2xMNlhieEVjR3F0Um' +
-      'dZSjNIcmtNSGJNR3JnU1dVRDRrU3pOdWlmem1mdW54dkgrQ29MQ0RiZm1ZN1U5b0laeG' +
-      '9yVmpRUS9PZDhvTTUxVk92N1ZHekRURA=='
+    // Methods for connecting DailyMotion API
 
-    var getVimeoAccessToken = function (callback) {
+    var FIELDS = 'id,title,thumbnail_180_url,embed_url'
+
+    var getVideo = function (id, callback) {
+      var cache = window.localStorage.getItem('video' + id)
+      if (cache) {
+        var parsed = JSON.parse(cache)
+        return callback(parsed)
+      }
+
       var xhr = new XMLHttpRequest()
-
       xhr.addEventListener('load', function () {
         if (xhr.status === 200) {
           var resp = JSON.parse(xhr.responseText)
+          window.localStorage.setItem('video' + id, xhr.responseText)
           return callback(resp)
         }
-        console.log(xhr)
-        throw new Error('Failed')
+        console.error(xhr)
       })
 
-      xhr.open('POST', 'https://api.vimeo.com/oauth/authorize/client')
-      xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded')
-      xhr.setRequestHeader('Authorization', 'basic ' + TOKEN)
-      xhr.send(encodeURI('grant_type=client_credentials'))
+      xhr.open('GET', 'https://api.dailymotion.com/video/' + id + '?' +
+        'fields=' + FIELDS)
+      xhr.send()
     }
 
-    var getVimeoVideo = function (id, accessToken, callback) {
-      var xhr = new XMLHttpRequest()
+    var getCachedVideo = function (id) {
+      var cache = window.localStorage.getItem('video' + id)
+      return JSON.parse(cache)
+    }
 
+    var getRelatedIds = function (id, callback) {
+      var cache = window.localStorage.getItem('related' + id)
+      if (cache) {
+        var parsed = JSON.parse(cache)
+        return callback(parsed.slice(0, NUM_CHILDREN))
+      }
+
+      var xhr = new XMLHttpRequest()
       xhr.addEventListener('load', function () {
         if (xhr.status === 200) {
-          return callback(JSON.parse(xhr.responseText))
+          var resp = JSON.parse(xhr.responseText)
+          var ids = resp.list.map(function (v) {
+            window.localStorage.setItem('video' + v.id, v)
+            return v.id
+          })
+          window.localStorage.setItem('related' + id, JSON.stringify(ids))
+          return callback(ids.slice(0, NUM_CHILDREN))
         }
         console.error(xhr)
       })
 
-      var url = 'https://api.vimeo.com/videos/' + id + '?' +
-        'access_token=' + accessToken
-
+      var url = 'https://api.dailymotion.com/video/' + id + '/related?' +
+        'fields=' + FIELDS
       xhr.open('GET', url)
       xhr.send()
     }
 
-    var getVimeoRelated = function (id, accessToken, callback) {
-      var NUM = 2
-      var xhr = new XMLHttpRequest()
-
-      xhr.addEventListener('load', function () {
-        if (xhr.status === 200) {
-          return callback(JSON.parse(xhr.responseText))
-        }
-        console.error(xhr)
-      })
-
-      var url = 'https://api.vimeo.com/videos/' + id + '/videos?' +
-        'filter=related&page=1&per_page=' + NUM + '&' +
-        'access_token=' + accessToken
-
-      xhr.open('GET', url)
-      xhr.send()
-    }
-
-    var getVimeoVideoId = function (videodata) {
-      var parts = videodata.uri.split('/')
-      return parts[parts.length - 1]
-    }
-
-    var getVimeoImageLiteral = function (videodata) {
-      var s = videodata.pictures.sizes[2]
+    var getThumbnail = function (videodata) {
       return {
-        src: s.link,
-        width: s.width,
-        height: s.height
+        src: videodata.thumbnail_180_url,
+        width: 300,
+        height: 180
       }
     }
 
-    var getVimeoIframeTag = function (videodata) {
-      var id = getVimeoVideoId(videodata)
-      var img = getVimeoImageLiteral(videodata)
+    var getIframeTag = function (videodata) {
+      var url = videodata.embed_url
+      var img = getVideoImageLiteral(videodata)
       var w = img.width
       var h = img.height
       return '<iframe type="text/html" ' +
         'width="' + w + '" height="' + h + '" frameborder="0" ' +
-        'src="https://player.vimeo.com/video/' + id + '" ' +
+        'src="' + url + '" ' +
         'webkitallowfullscreen mozallowfullscreen allowfullscreen ' +
         '></iframe>'
     }
 
-    var SpaceVideo = function (view, videodata) {
-      var data = videodata
-      var videoId = getVimeoVideoId(data)
-      var relateddata = null
-      var group = null
-      var simg = null
-      var shtml = null
+    // Unique id for each SpaceVideo.
+    var idCounter = 0
 
-      this.init = function (parentItem, pivotItem, childIndex) {
-        // Require view and parent SpaceVideo.
-        // Optional pivot IVector and childIndex number.
+    var SpaceVideo = function (view, videoGroup, videodata) {
+      // Identity
+      this.id = idCounter.toString()
+      idCounter += 1
+
+      // Tapspace items of the video
+      this.group = null
+      this.thumb = null
+      this.player = null
+
+      // Adjacent visible SpaceVideos for breadth-first search
+      this.parent = null
+      this.prevSibling = null
+      this.nextSibling = null
+      this.children = []
+
+      // Related video objects from API.
+      this.videoId = videodata.id
+      this.parentVideoId = null
+      this.childVideoIds = null
+
+      this.init = function (parent) {
+        // Require parent SpaceVideo (can be null).
+        //
+        var self = this
+
         // Group for title, thumbnail and player
-        group = new tapspace.SpaceGroup(parentItem)
-        var imglit = getVimeoImageLiteral(data)
-        // Show thumbnail initially
-        simg = new tapspace.SpaceImage(imglit, group)
+        this.group = new tapspace.SpaceGroup(videoGroup)
 
-        // Position. The first item does not need positioning.
-        if (pivotItem && typeof childIndex === 'number') {
-          var parentWidth = pivotItem.getISize().getWidth()
-          var myWidth = parentWidth.multiply(0.618)
+        // Show thumbnail initially
+        this.thumb = new tapspace.SpaceImage(getThumbnail(videodata),
+          this.group)
+        var label = new tapspace.SpaceHTML('<h1>' + this.id + '<span style="color: black">' + this.id + '</span></h1>')
+        label.setParent(this.group)
+
+        if (parent) {
+          this.parent = parent
+          this.parentVideoId = parent.videoId
+
+          // Set parent's children
+          var pc = this.parent.children
+          pc.push(this)
+
+          // Set siblings
+          if (pc.length > 1) {
+            this.prevSibling = pc[pc.length - 2]
+            this.prevSibling.nextSibling = this
+          }
+
+          // Position. The root item does not need positioning.
+          var childIndex = this.parent.children.length - 1
+          var parentWidth = this.parent.thumb.getISize().getWidth()
+          var pivot = this.parent.thumb.atMid()
+          var myWidth = parentWidth.multiply(1 / LEVEL_SCALE)
           var myHalf = myWidth.multiply(0.5)
-          var radius = parentWidth.multiply(1.2).subtract(myHalf)
+          var radius = parentWidth.multiply(1).subtract(myHalf)
           var radiusmax = radius.add(myWidth)
-          var angle = childIndex * Math.PI / 6 - Math.PI / 4
-          var pivot = pivotItem.atMid()
-          group.translateScaleRotate(
-            [simg.atMidW(), simg.atMidE()],
+          var angle = childIndex * Math.PI / 7 - 1.5 * Math.PI / 7
+
+          this.group.translateScaleRotate(
+            [this.thumb.atMidW(), this.thumb.atMidE()],
             [
-              pivot.polarOffset(radius, angle, pivotItem),
-              pivot.polarOffset(radiusmax, angle, pivotItem)
+              pivot.polarOffset(radius, angle, this.parent.thumb),
+              pivot.polarOffset(radiusmax, angle, this.parent.thumb)
             ]
           )
         }
 
-        var tapper = new tapspace.Touchable(view, simg)
+        var tapper = new tapspace.Touchable(view, this.thumb)
         tapper.start({ tap: true, preventDefault: false })
+        tapper.on('tap', function () {
+          self.openPlayer()
+          view.fitScale(this.thumb).scale(view.atMid(), 1.618)
+        })
       }
 
       this.destroy = function () {
-        item.remove()
-      }
 
-      this.getImage = function () {
-        if (simg) {
-          return simg
+        // Remove from siblings
+        if (this.prevSibling) {
+          this.prevSibling.nextSibling = this.nextSibling
         }
-        throw new Error('simg is null. Try to init SpaceVideo first.')
-      }
-
-      this.getGroup = function () {
-        // To be the parent of the next
-        if (group) {
-          return group
+        if (this.nextSibling) {
+          this.nextSibling.prevSibling = this.prevSibling
         }
-        throw new Error('Group is null. Try init the SpaceVideo first.')
+
+        // Remove from parent
+        if (this.parent) {
+          var ci = this.parent.children.indexOf(this)
+          if (ci > -1) { this.parent.children.splice(ci, 1) }
+        }
+
+        // Remove from children
+        this.children.forEach(function (cv) {
+          cv.parent = null
+        })
+
+        // Remove elements
+        this.group.remove()
+        this.group = null
       }
 
-      this.atMid = function () {
-        return simg.atMid()
+      this.getAdjacent = function () {
+        var adj = this.children.slice(0)
+        if (this.parent) adj.push(this.parent)
+        if (this.prevSibling) adj.push(this.prevSibling)
+        if (this.nextSibling) adj.push(this.nextSibling)
+        return adj
+      }
+
+      this.getNodesAtDepth = function (depth) {
+        if (depth < 1) {
+          return [this]
+        }
+        if (depth === 1) {
+          return this.children
+        }
+        return this.children.reduce(function (acc, sv) {
+          return acc.concat(sv.getNodesAtDepth(depth - 1))
+        }, [])
       }
 
       this.openPlayer = function () {
-        var html = getVimeoIframeTag(data)
-        shtml = new tapspace.SpaceHTML(html)
-        item.addChild(shtml)
-        shtml.translateScaleRotate(
-          [shtml.atNW(), shtml.atNE()],
-          [simg.atNW(), simg.atNE()]
-        )
+        var html = getIframeTag(videodata)
+        this.player = new tapspace.SpaceHTML(html)
+        this.group.addChild(this.player)
       }
 
       this.closePlayer = function () {
-        if (shtml) {
-          shtml.remove()
+        if (this.player) {
+          this.player.remove()
         }
       }
 
-      this.openLeaves = function (accessToken, cb) {
-        var self = this
+      this.openParent = function (cb) {
+        if (this.parentVideoId && this.parent === null) {
+          getVideo(this.parentVideoId, function (videoData) {
+            this.parent = new SpaceVideo(view, videoGroup, videoData)
+            this.parent.init()
+          })
+        }
+      }
 
-        if (group === null || simg === null) {
+      this.openChildren = function (cb) {
+        var self = this
+        if (typeof cb === 'undefined') cb = function () {}
+
+        if (this.group === null || this.thumb === null) {
           throw new Error('Group is null. Call SpaceItem#init first.')
         }
 
-        if (relateddata === null) {
-          getVimeoRelated(videoId, accessToken, function (res) {
-            // console.log('related success', res3)
-            relateddata = res
-            self.openLeaves(accessToken, cb)
+        if (this.childVideoIds === null) {
+          getRelatedId(this.videoId, function (rel) {
+            self.childVideoIds = rel
+            self.openChildren(cb)
           })
 
           return
         }
 
-        var leaves = relateddata.data.map(function (relvid, i) {
-          var child = new SpaceVideo(view, relvid)
-          child.init(group, simg, i)
-          return child
-        })
+        if (this.children.length === 0) {
+          this.children = this.childVideoIds.map(function (cvid, i) {
+            var videoData = getCachedVideo(cvid)
+            var child = new SpaceVideo(view, videoGroup, videoData)
+            child.init(self)
+            return child
+          })
+        }
 
-        return cb(leaves)
-      }
-
-      this.closeLeaves = function () {
-
+        return cb(this.children)
       }
     }
 
     // Tapspace
 
-    var debugSV = function (svideo) {
-      console.log(svideo.getImage().atMid().toSpace().toArray())
-    }
+    var rootVideo = null
 
     var space = new tapspace.Space()
+    var videoGroup = new tapspace.SpaceGroup(space)
     var view = new tapspace.SpaceView(space)
     view.mount(document.getElementById('space'))
 
-    var viewtouch = new tapspace.Touchable(view, view)
-    var viewwheel = new tapspace.Wheelable(view, view)
-    viewwheel.start({ scale: true })
-    viewtouch.start({ translate: true, scale: true })
+    (function defineViewTransform() {
+      var onTransform = function (itr) {
+        videoGroup.transformBy(itr)
+      }
 
-    var videos = new tapspace.SpaceGroup(space)
+      var viewtouch = new tapspace.Touchable(view, view, onTransform)
+      var viewwheel = new tapspace.Wheelable(view, view, onTransform)
+      viewwheel.start({ scale: true })
+      viewtouch.start({ translate: true, scale: true })
+    }())
 
-    getVimeoAccessToken(function (res) {
-      // console.log('access success', res)
-      var accessToken = res.access_token
+    var getViewLevel = function () {
+      // Return num. At level 0 the root item is at good viewing distance.
+      // Level x: scale = LEVEL_SCALE ^ x
+      // <=> x = log(scale) / log(LEVEL_SCALE)
+      var scale = videoGroup.getGlobalTransform().getScale()
+      var levelfactor = Math.log(scale) / Math.log(LEVEL_SCALE)
+      return Math.round(levelfactor)
+    }
 
-      var videoId = '257871741'
-      getVimeoVideo(videoId, accessToken, function (res2) {
-        console.log('video success', res2)
+    var getNearestOf = function (svids) {
+      var viewMid = view.atMid().toSpace()
+      var minDist = null
+      var minVid = null
 
-        var svid = new SpaceVideo(view, res2)
-        svid.init(videos)
+      return svids.reduce(function (acc, sv) {
+        var mid = sv.thumb.atMid().toSpace()
+        var dist = mid.distance(viewMid)
+        if (acc.minDist === null || dist < acc.minDist) {
+          acc.minDist = dist
+          acc.minVid = sv
+        }
+        return acc
+      }, {
+        minDist: null,
+        minVid: null
+      }).minVid
+    }
 
-        debugSV(svid)
+    var openNeighbors = function (svid) {
+      var toBeRemoved = []
+      var toBeOpened = []
 
-        svid.openLeaves(accessToken, function (leaves) {
-          leaves.forEach(function (leafSV) {
-            debugSV(leafSV)
-            leafSV.openLeaves(accessToken, function (leaves2) {
-              leaves2.forEach(function (l) {
-                debugSV(l)
-              })
-            })
-          })
+      tapspace.traverse({
+        root: svid,
+        idProp: 'id',
+        iteratee: function (v, depth) {
+          console.log('iterating video', v.id, 'at depth', depth)
+          if (depth > 2) {
+            toBeRemoved.push(v)
+          }
+          // Leaves at depth 2
+          if (depth < 2) {
+            toBeOpened.push(v)
+          }
 
-          view.fitScale(videos)
-        })
+          return v.getAdjacent()
+        }
       })
+
+      toBeRemoved.forEach(function (v) {
+        console.log('destroy', v.id)
+        v.destroy()
+      })
+      toBeOpened.forEach(function (v) {
+        console.log('openLeaves of', v.id)
+        v.openParent()
+        v.openLeaves()
+      })
+    }
+
+    var onGestureEnd = function () {
+      console.log('gestureend')
+
+      if (rootVideo) {
+        var level = getViewLevel()
+        var focusVids = rootVideo.getNodesAtDepth(level)
+        var focusVid = getNearestOf(focusVids)
+        console.log('view level', level)
+        console.log('focus to', focusVid.id)
+        openNeighbors(focusVid)
+      }
+
+      // find item closest to the middle of the view
+      // var focusVid = getNearest()
+      // var focusImg = focusVid.getImage()
+      // var gt = focusImg.getGlobalTransform()
+      // var vgt = view.getGlobalTransform()
+      // var focusRot = gt.getRotation()
+      // var viewRot = vgt.getRotation()
+      //
+      // var rootGroup = rootVideo.getGroup()
+      // var groupEl = view.getElementBySpaceItem(rootGroup)
+      //
+      // // Transitionend is not emitted if the transform is not big enough.
+      // if (Math.abs(viewRot - focusRot) > 0.0001) {
+      //   groupEl.style.transition = 'transform 0.2s'
+      //   groupEl.addEventListener('transitionend', function () {
+      //     console.log('transitoinend')
+      //     groupEl.style.transition = 'none'
+      //   }, { capture: false, once: true })
+      //
+      //   rootGroup.rotate(view.atMid(), viewRot - focusRot)
+      // }
+    }
+
+    viewtouch.on('gestureend', onGestureEnd)
+    viewwheel.on('gestureend', onGestureEnd)
+
+    getVideo(ROOT_VIDEO_ID, function (videores) {
+      //console.log('video success', videores)
+
+      rootVideo = new SpaceVideo(view, videoGroup, videores)
+      rootVideo.init(null)
+
+      openNeighbors(rootVideo)
+
+      view.fitScale(rootVideo.thumb).scale(view.atNorm(0.2, 0.5), 1.618)
     })
   </script>
 </body>
