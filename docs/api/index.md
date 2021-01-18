@@ -398,10 +398,11 @@ To allow users to directly interact with the items, make the items touchable. `T
 
 The mode object defines the allowed types of manipulation. Some types are not possible together so a type can override another. The full list of the mode properties and their conflicts is given below.
 
-- *translate:* set `true` to allow horizontal and vertical movement. Default is `false`. If `pivot` is specified the value of `translate` has no effect.
+- *translate:* set `true` to allow horizontal and vertical movement. Default is `false`. If `pivot` is specified the value of `translate` has no effect. If `angle` is specified the translation will occur only along a line at that angle.
 - *rotate:* set `true` to allow rotation. If `translate: false` and `pivot` is not specified the rotation is allowed only around the center of the item. Default is `false`.
 - *scale:* set `true` to allow scaling. If `translate: false` and `pivot` is not specified the scaling is allowed only around the center of the item. Default is `false`.
 - *pivot:* set to a `IVector` to specify a pivot for rotation and scaling. If `pivot` is specified the value of `translate` has no effect. Default is `null`.
+- *angle:* set to a `number` in radians to limit translation to occur only at the given angle.
 - *tap:* set to `true` to allow emitting of `tap` event. Default is `false`.
 - *tapMaxTravel:*  Default is 20.
 - *preventDefault:* set `true` to cancel handled touch and mouse events. Set `false` to let `Touchable` managers higher in the DOM also handle the events. Default is `true`. **Warning:** The default value will change in v2 to `false`. Therefore to make your app forward compatible, always specify `preventDefault`.
